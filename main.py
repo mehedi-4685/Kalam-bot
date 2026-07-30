@@ -18,19 +18,7 @@ import random
 import phonenumbers
 import pyotp
 import csv
-from io import StringIO, BytesIO
-import os
-import tempfile
-
-# ---------- New libraries for card & voice ----------
-try:
-    from PIL import Image, ImageDraw, ImageFont
-except ImportError:
-    Image = None
-try:
-    from pydub import AudioSegment
-except ImportError:
-    AudioSegment = None
+from io import StringIO
 
 logging.basicConfig(level=logging.INFO)
 
@@ -475,14 +463,6 @@ def get_country_from_phone(phone: str) -> tuple:
             return code, flag_emoji
     return "", ""
 
-# Custom emoji inline button fallback helper
-def make_inline_button(text: str, callback_data: str = None, icon_custom_emoji_id: str = None, **kwargs) -> InlineKeyboardButton:
-    try:
-        return InlineKeyboardButton(text=text, callback_data=callback_data, icon_custom_emoji_id=icon_custom_emoji_id, **kwargs)
-    except TypeError:
-        fallback_text = f"🌍 {text}" if icon_custom_emoji_id else text
-        return InlineKeyboardButton(text=fallback_text, callback_data=callback_data, **kwargs)
-
 async def safe_send_message(target, text, reply_markup=None, parse_mode="HTML"):
     try:
         if isinstance(target, types.Message):
@@ -795,11 +775,6 @@ def main_menu(user_id: int):
         types.KeyboardButton(text="EXTRACT OTP", icon_custom_emoji_id=CUSTOM_EMOJIS["folder"]),
         types.KeyboardButton(text="STATUS", icon_custom_emoji_id=CUSTOM_EMOJIS["chart"])
     )
-    # New extra feature buttons
-    builder.row(
-        types.KeyboardButton(text="🎴 Profile Card", icon_custom_emoji_id=CUSTOM_EMOJIS["card"]),
-        types.KeyboardButton(text="🎤 Voice FX", icon_custom_emoji_id=CUSTOM_EMOJIS["wave"])
-    )
     if is_admin(user_id):
         builder.row(types.KeyboardButton(text="ADMIN PANEL", icon_custom_emoji_id=CUSTOM_EMOJIS["gear"]))
     return builder.as_markup(resize_keyboard=True)
@@ -815,8 +790,7 @@ def get_number_main_menu():
     buttons = []
     for svc in ["FACEBOOK", "WHATSAPP", "INSTAGRAM", "NEW FB"]:
         display_name = "New FB" if svc == "NEW FB" else svc.title()
-        btn = make_inline_button(text=display_name, callback_data=f"view_svc_{svc}", icon_custom_emoji_id=svc_config[svc])
-        buttons.append(btn)
+        buttons.append(types.InlineKeyboardButton(text=display_name, callback_data=f"view_svc_{svc}", icon_custom_emoji_id=svc_config[svc]))
     builder.row(buttons[0], buttons[1])
     builder.row(buttons[2], buttons[3])
     return builder.as_markup()
@@ -844,129 +818,11 @@ def admin_menu():
 
 def admin_management_menu():
     builder = InlineKeyboardBuilder()
-    builder.row(make_inline_button(text="Add Admin", callback_data="add_admin_btn", icon_custom_emoji_id=CUSTOM_EMOJIS["add"]))
-    builder.row(make_inline_button(text="Remove Admin", callback_data="remove_admin_btn", icon_custom_emoji_id=CUSTOM_EMOJIS["error"]))
-    builder.row(make_inline_button(text="List Admins", callback_data="list_admins", icon_custom_emoji_id=CUSTOM_EMOJIS["folder"]))
-    builder.row(make_inline_button(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
+    builder.row(types.InlineKeyboardButton(text="Add Admin", callback_data="add_admin_btn", icon_custom_emoji_id=CUSTOM_EMOJIS["add"]))
+    builder.row(types.InlineKeyboardButton(text="Remove Admin", callback_data="remove_admin_btn", icon_custom_emoji_id=CUSTOM_EMOJIS["error"]))
+    builder.row(types.InlineKeyboardButton(text="List Admins", callback_data="list_admins", icon_custom_emoji_id=CUSTOM_EMOJIS["folder"]))
+    builder.row(types.InlineKeyboardButton(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
     return builder.as_markup()
-
-# ===================== NEW FEATURES =====================
-# Profile Card Generator
-async def generate_profile_card(user_id: int):
-    if Image is None:
-        return None
-    user = cursor.execute("SELECT fullname, username FROM users WHERE id=?", (user_id,)).fetchone()
-    if not user:
-        return None
-    fullname = user[0] or "User"
-    username = f"@{user[1]}" if user[1] else "No username"
-    total_otp = cursor.execute("SELECT COUNT(*) FROM otp_success_logs WHERE user_id=?", (user_id,)).fetchone()[0]
-    
-    img = Image.new('RGB', (800, 400), color=(25, 25, 35))
-    draw = ImageDraw.Draw(img)
-    try:
-        font_title = ImageFont.truetype("arial.ttf", 48)
-        font_body = ImageFont.truetype("arial.ttf", 32)
-    except:
-        font_title = ImageFont.load_default()
-        font_body = ImageFont.load_default()
-    draw.rectangle([(20, 20), (780, 380)], outline=(255, 215, 0), width=3)
-    draw.text((400, 60), "USER PROFILE CARD", fill=(255, 215, 0), font=font_title, anchor="mt")
-    draw.text((400, 140), fullname, fill=(255, 255, 255), font=font_title, anchor="mt")
-    draw.text((400, 200), username, fill=(200, 200, 200), font=font_body, anchor="mt")
-    draw.text((400, 270), f"Total OTP received: {total_otp}", fill=(255, 255, 255), font=font_body, anchor="mt")
-    draw.text((400, 320), "Keep using SKY SS!", fill=(255, 215, 0), font=font_body, anchor="mt")
-    
-    buf = BytesIO()
-    img.save(buf, format='PNG')
-    buf.seek(0)
-    return buf
-
-# Voice Effects
-AVAILABLE_VOICE_FX = ["chipmunk", "slow", "fast", "reverse", "bass", "robot"]
-
-async def apply_voice_effect(input_bytes: bytes, effect: str) -> BytesIO:
-    if AudioSegment is None:
-        raise Exception("pydub not installed")
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp_in:
-        tmp_in.write(input_bytes)
-        tmp_in_path = tmp_in.name
-    try:
-        audio = AudioSegment.from_file(tmp_in_path)
-        if effect == "chipmunk":
-            new_audio = audio._spawn(audio.raw_data, overrides={"frame_rate": int(audio.frame_rate * 1.5)})
-            new_audio = new_audio.set_frame_rate(audio.frame_rate)
-        elif effect == "slow":
-            new_audio = audio._spawn(audio.raw_data, overrides={"frame_rate": int(audio.frame_rate * 0.75)})
-            new_audio = new_audio.set_frame_rate(audio.frame_rate)
-        elif effect == "fast":
-            new_audio = audio.speedup(playback_speed=1.5)
-        elif effect == "reverse":
-            new_audio = audio.reverse()
-        elif effect == "bass":
-            new_audio = audio.low_pass_filter(300)
-        elif effect == "robot":
-            new_audio = audio.low_pass_filter(400).high_pass_filter(800)
-        else:
-            new_audio = audio
-        out_buf = BytesIO()
-        new_audio.export(out_buf, format="ogg")
-        out_buf.seek(0)
-        return out_buf
-    finally:
-        if os.path.exists(tmp_in_path):
-            os.unlink(tmp_in_path)
-
-# New feature handlers
-@dp.message(F.text == "🎴 Profile Card")
-async def profile_card_command(message: types.Message):
-    if await check_maintenance(message.from_user.id, message=message):
-        return
-    await message.answer_chat_action("upload_photo")
-    try:
-        card = await asyncio.to_thread(generate_profile_card, message.from_user.id)
-        if card:
-            await message.answer_photo(types.BufferedInputFile(card.read(), filename="profile.png"),
-                                       caption="Here is your profile card!")
-        else:
-            await safe_send_message(message, "Could not generate card (Pillow not installed).")
-    except Exception as e:
-        await safe_send_message(message, f"Error: {e}")
-
-@dp.message(F.text == "🎤 Voice FX")
-async def voice_fx_info(message: types.Message):
-    effects_list = ", ".join(AVAILABLE_VOICE_FX)
-    await safe_send_message(message,
-        f"Send me a voice message and reply with /voicefx <effect>\nAvailable effects: {effects_list}")
-
-@dp.message(Command("voicefx"))
-async def voice_fx_command(message: types.Message):
-    if not message.reply_to_message or not message.reply_to_message.voice:
-        await safe_send_message(message, "Please reply to a voice message with /voicefx <effect>")
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        await safe_send_message(message, f"Usage: /voicefx <effect> (available: {', '.join(AVAILABLE_VOICE_FX)})")
-        return
-    effect = args[1].lower()
-    if effect not in AVAILABLE_VOICE_FX:
-        await safe_send_message(message, f"Unknown effect. Choose from: {', '.join(AVAILABLE_VOICE_FX)}")
-        return
-    voice = message.reply_to_message.voice
-    try:
-        file = await bot.get_file(voice.file_id)
-        voice_bytes = await bot.download_file(file.file_path)
-        voice_bytes = voice_bytes.read()
-        await message.answer_chat_action("record_voice")
-        processed = await asyncio.to_thread(apply_voice_effect, voice_bytes, effect)
-        await message.reply_voice(types.BufferedInputFile(processed.read(), filename="effect.ogg"),
-                                  caption=f"Applied effect: {effect}")
-    except Exception as e:
-        await safe_send_message(message, f"Error processing voice: {e}")
-
-# ===================== ORIGINAL BOT HANDLERS (COMPLETE) =====================
-# (The entire original script, all commands/callbacks, exactly as you provided, follows here.
-# Due to the immense length, I have integrated every single line – no truncation.)
 
 @dp.message(Command("start"))
 async def start(message: types.Message, state: FSMContext):
@@ -977,12 +833,16 @@ async def start(message: types.Message, state: FSMContext):
     if await check_maintenance(message.from_user.id, message=message):
         return
     text = f"""
-<tg-emoji emoji-id="{CUSTOM_EMOJIS['planet']}">🪐</tg-emoji>  <b><u>𝗦𝗬 𝗦𝗦</u></b>
+<tg-emoji emoji-id="{CUSTOM_EMOJIS['planet']}">🪐</tg-emoji>  <b><u>𝗦𝗬𝗞 𝗦𝗦</u></b>
 ━━━━━━━━━━━━━━━━━━━━
+
 👋 𝗛𝗘𝗟𝗟𝗢, <b>{message.from_user.first_name}</b>!
+
 Get OTP codes instantly using virtual phone numbers — fast, reliable, global.
+
 ⚡ <b>Instant Delivery</b> · <tg-emoji emoji-id="{CUSTOM_EMOJIS['globe']}">🌐</tg-emoji> <b>Global Numbers</b>
 🐱‍ <b>Auto OTP Detection</b>
+
 ━━━━━━━━━━━━━━━━━━━━
 <tg-emoji emoji-id="{CUSTOM_EMOJIS['channel']}">📣</tg-emoji> <b>Channel:</b> @FBDEALZONEBUYSELL
 <tg-emoji emoji-id="{CUSTOM_EMOJIS['chat']}">💬</tg-emoji> <b>Group:</b> @SKYOTP_SKY
@@ -1016,10 +876,14 @@ async def send_home_view(callback: types.CallbackQuery):
     text = f"""
 <tg-emoji emoji-id="{CUSTOM_EMOJIS['planet']}">🪐</tg-emoji>  <b><u>𝗦𝗬 𝗦𝗦</u></b>
 ━━━━━━━━━━━━━━━━━━━━
+
 👋 Hello, <b>{callback.from_user.first_name}</b>!
+
 Get OTP codes instantly using virtual phone numbers — fast, reliable, global.
+
 ⚡ <b>Instant Delivery</b> · <tg-emoji emoji-id="{CUSTOM_EMOJIS['globe']}">🌐</tg-emoji> <b>Global Numbers</b>
 🐱‍ <b>Auto OTP Detection</b>
+
 ━━━━━━━━━━━━━━━━━━━━
 <tg-emoji emoji-id="{CUSTOM_EMOJIS['channel']}">📣</tg-emoji> <b>Channel:</b> @FBDEALZONEBUYSELL
 <tg-emoji emoji-id="{CUSTOM_EMOJIS['chat']}">💬</tg-emoji> <b>Group:</b> @SKYOTP_SKY
@@ -1206,6 +1070,7 @@ async def admin_main(message: types.Message, state: FSMContext):
         gear_tag = f'<tg-emoji emoji-id="{CUSTOM_EMOJIS["gear"]}">⚙️</tg-emoji>'
         await safe_send_message(message, f"{gear_tag} <b>ADMIN PANEL SYSTEM</b>", reply_markup=admin_menu(), parse_mode="HTML")
 
+# -------------------- NEW: Clear Auto Ranges --------------------
 @dp.callback_query(F.data == "clear_auto_services")
 async def clear_auto_services_callback(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
@@ -1219,6 +1084,7 @@ async def clear_auto_services_callback(callback: types.CallbackQuery, state: FSM
     gear_tag = f'<tg-emoji emoji-id="{CUSTOM_EMOJIS["gear"]}">⚙️</tg-emoji>'
     await safe_edit_message(callback.message, f"{gear_tag} <b>ADMIN PANEL SYSTEM</b>", reply_markup=admin_menu(), parse_mode="HTML")
 
+# -------------------- Manage Services (2 columns) --------------------
 @dp.callback_query(F.data == "manage_services")
 async def manage_services(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
@@ -1230,13 +1096,14 @@ async def manage_services(callback: types.CallbackQuery, state: FSMContext):
         for sid, name, flag, rval, succ in rows:
             hot_mark = "🔥" if succ > 0 else ""
             builder.button(text=f"{name} [{rval}] {hot_mark}", callback_data=f"del_srv_{sid}", icon_custom_emoji_id=CUSTOM_EMOJIS["delete"])
-    builder.adjust(2)
-    builder.row(make_inline_button(text="Clear All Ranges", callback_data="clear_all_ranges", icon_custom_emoji_id=CUSTOM_EMOJIS["delete"]))
-    builder.row(make_inline_button(text="Add Service", callback_data="add_service", icon_custom_emoji_id=CUSTOM_EMOJIS["add"]))
-    builder.row(make_inline_button(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
+    builder.adjust(2)  # প্রতি লাইনে ২টি বাটন
+    builder.row(types.InlineKeyboardButton(text="Clear All Ranges", callback_data="clear_all_ranges", icon_custom_emoji_id=CUSTOM_EMOJIS["delete"]))
+    builder.row(types.InlineKeyboardButton(text="Add Service", callback_data="add_service", icon_custom_emoji_id=CUSTOM_EMOJIS["add"]))
+    builder.row(types.InlineKeyboardButton(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
     folder_tag = f'<tg-emoji emoji-id="{CUSTOM_EMOJIS["folder"]}">📂</tg-emoji>'
     await safe_edit_message(callback.message, f"{folder_tag} <b>Service List</b> (Click to delete):", reply_markup=builder.as_markup(), parse_mode="HTML")
 
+# -------------------- باقی অ্যাডমিন কলব্যাক (সংক্ষেপে আগের মত) --------------------
 @dp.callback_query(F.data == "ban_user_btn")
 async def ban_user_start(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
@@ -1373,7 +1240,7 @@ async def admin_stats_cb(callback: types.CallbackQuery, state: FSMContext):
         f"{email_tag} <b>Today's Success OTP:</b> {today_otp}\n"
     )
     builder = InlineKeyboardBuilder()
-    builder.row(make_inline_button(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
+    builder.row(types.InlineKeyboardButton(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
     await safe_edit_message(callback.message, text, reply_markup=builder.as_markup(), parse_mode="HTML")
     await callback.answer()
 
@@ -1423,7 +1290,7 @@ async def view_service_countries(callback: types.CallbackQuery, state: FSMContex
     )
     builder = InlineKeyboardBuilder()
     for svc_id, c_name, flag, stock in manuals:
-        builder.row(make_inline_button(
+        builder.row(types.InlineKeyboardButton(
             text=f"{c_name} (Premium: {stock})",
             callback_data=f"man_cntry_{svc_id}",
             icon_custom_emoji_id=CUSTOM_EMOJIS["package"]
@@ -1431,16 +1298,16 @@ async def view_service_countries(callback: types.CallbackQuery, state: FSMContex
     for ccode, flag, cnt in ranges:
         button_icon_id = get_custom_flag_icon_id(ccode)
         country_full = get_country_name(ccode)
-        builder.row(make_inline_button(
+        builder.row(types.InlineKeyboardButton(
             text=f"{country_full}",
             callback_data=f"cntry_{svc_name}_{ccode}",
             icon_custom_emoji_id=button_icon_id
         ))
     if count_live == 0:
-        builder.row(make_inline_button(text="No Countries Available", callback_data="none", icon_custom_emoji_id=CUSTOM_EMOJIS["ban"]))
+        builder.row(types.InlineKeyboardButton(text="No Countries Available", callback_data="none", icon_custom_emoji_id=CUSTOM_EMOJIS["ban"]))
     builder.row(
-        make_inline_button(text="Refresh", callback_data=f"view_svc_{svc_name}", icon_custom_emoji_id=CUSTOM_EMOJIS["refresh"]),
-        make_inline_button(text="Back", callback_data="back_to_services_menu", icon_custom_emoji_id=CUSTOM_EMOJIS["back"])
+        types.InlineKeyboardButton(text="Refresh", callback_data=f"view_svc_{svc_name}", icon_custom_emoji_id=CUSTOM_EMOJIS["refresh"]),
+        types.InlineKeyboardButton(text="Back", callback_data="back_to_services_menu", icon_custom_emoji_id=CUSTOM_EMOJIS["back"])
     )
     try:
         await safe_edit_message(callback.message, text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -1514,7 +1381,7 @@ async def show_top_10_users(callback: types.CallbackQuery, state: FSMContext):
                 rank = f"<code>{idx+1}.</code>"
             text += f"{rank} {fullname} {username} - <code>{row[2]} OTP</code>\n"
     builder = InlineKeyboardBuilder()
-    builder.row(make_inline_button(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
+    builder.row(types.InlineKeyboardButton(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
     await safe_edit_message(callback.message, text, reply_markup=builder.as_markup(), parse_mode="HTML")
     await callback.answer()
 
@@ -1525,7 +1392,7 @@ async def show_total_users(callback: types.CallbackQuery, state: FSMContext):
         return
     count = cursor.execute("SELECT COUNT(id) FROM users").fetchone()[0]
     builder = InlineKeyboardBuilder()
-    builder.row(make_inline_button(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
+    builder.row(types.InlineKeyboardButton(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
     user_tag = f'<tg-emoji emoji-id="{CUSTOM_EMOJIS["users"]}">👥</tg-emoji>'
     await safe_edit_message(callback.message, f"{user_tag} <b>Total Registered Users:</b> <code>{count}</code>", reply_markup=builder.as_markup(), parse_mode="HTML")
     await callback.answer()
@@ -1625,7 +1492,7 @@ async def list_admins(callback: types.CallbackQuery, state: FSMContext):
     else:
         text = f"{user_tag} <b>Current Active Admins:</b>\n\nNo admins found."
     builder = InlineKeyboardBuilder()
-    builder.row(make_inline_button(text="Back", callback_data="manage_admins", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
+    builder.row(types.InlineKeyboardButton(text="Back", callback_data="manage_admins", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
     await safe_edit_message(callback.message, text, reply_markup=builder.as_markup(), parse_mode="HTML")
     await callback.answer()
 
@@ -1892,8 +1759,8 @@ async def manage_manual_numbers(callback: types.CallbackQuery, state: FSMContext
         return
     builder = InlineKeyboardBuilder()
     for svc_id, svc, country, stock in services:
-        builder.row(make_inline_button(text=f"{svc} - {country} ({stock} left)", callback_data=f"del_manual_{svc_id}", icon_custom_emoji_id=CUSTOM_EMOJIS["delete"]))
-    builder.row(make_inline_button(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
+        builder.row(types.InlineKeyboardButton(text=f"{svc} - {country} ({stock} left)", callback_data=f"del_manual_{svc_id}", icon_custom_emoji_id=CUSTOM_EMOJIS["delete"]))
+    builder.row(types.InlineKeyboardButton(text="Back", callback_data="admin_back", icon_custom_emoji_id=CUSTOM_EMOJIS["back"]))
     folder_tag = f'<tg-emoji emoji-id="{CUSTOM_EMOJIS["folder"]}">📋</tg-emoji>'
     await safe_edit_message(callback.message, f"{folder_tag} Manual services - click to delete:", reply_markup=builder.as_markup())
     await callback.answer()
@@ -1963,11 +1830,11 @@ async def manual_country_selected(callback: types.CallbackQuery, state: FSMConte
     )
     builder = InlineKeyboardBuilder()
     for num in nums:
-        builder.row(make_inline_button(text=f"⎘ {num}", copy_text=CopyTextButton(text=str(num)), icon_custom_emoji_id=service_icon_id))
-    builder.row(make_inline_button(text="Change Number", callback_data=f"man_change_{svc_id}", icon_custom_emoji_id=CUSTOM_EMOJIS['next']))
-    builder.row(make_inline_button(text="Change Country", callback_data=f"view_svc_{svc_name}", icon_custom_emoji_id=CUSTOM_EMOJIS['globe']))
-    builder.row(make_inline_button(text="Home", callback_data="back_to_home", icon_custom_emoji_id=CUSTOM_EMOJIS['store']),
-                make_inline_button(text="OTP Group ", url=OTP_GROUP_LINK, icon_custom_emoji_id=CUSTOM_EMOJIS['chat']))
+        builder.row(InlineKeyboardButton(text=f"⎘ {num}", copy_text=CopyTextButton(text=str(num)), icon_custom_emoji_id=service_icon_id))
+    builder.row(InlineKeyboardButton(text="Change Number", callback_data=f"man_change_{svc_id}", icon_custom_emoji_id=CUSTOM_EMOJIS['next']))
+    builder.row(InlineKeyboardButton(text="Change Country", callback_data=f"view_svc_{svc_name}", icon_custom_emoji_id=CUSTOM_EMOJIS['globe']))
+    builder.row(InlineKeyboardButton(text="Home", callback_data="back_to_home", icon_custom_emoji_id=CUSTOM_EMOJIS['store']),
+                InlineKeyboardButton(text="OTP Group ", url=OTP_GROUP_LINK, icon_custom_emoji_id=CUSTOM_EMOJIS['chat']))
     await safe_edit_message(fetching_msg, text, reply_markup=builder.as_markup(), parse_mode="HTML")
     await callback.answer()
 
@@ -2045,11 +1912,11 @@ async def man_change_numbers(callback: types.CallbackQuery, state: FSMContext):
     text = f"{globe_tag} <b>Country :</b> {flag} {c_name}\n{wait_tag} <i>Waiting for OTP</i>"
     builder = InlineKeyboardBuilder()
     for num in new_nums:
-        builder.row(make_inline_button(text=f" {num}", copy_text=CopyTextButton(text=str(num)), icon_custom_emoji_id=service_icon_id))
-    builder.row(make_inline_button(text="Change Number", callback_data=f"man_change_{svc_id}", icon_custom_emoji_id=CUSTOM_EMOJIS["next"]))
-    builder.row(make_inline_button(text="Change Country", callback_data=f"view_svc_{svc_name}", icon_custom_emoji_id=CUSTOM_EMOJIS["globe"]))
-    builder.row(make_inline_button(text="Home", callback_data="back_to_home", icon_custom_emoji_id=CUSTOM_EMOJIS["store"]),
-                make_inline_button(text="OTP Group ", url=OTP_GROUP_LINK, icon_custom_emoji_id=CUSTOM_EMOJIS["chat"]))
+        builder.row(InlineKeyboardButton(text=f" {num}", copy_text=CopyTextButton(text=str(num)), icon_custom_emoji_id=service_icon_id))
+    builder.row(InlineKeyboardButton(text="Change Number", callback_data=f"man_change_{svc_id}", icon_custom_emoji_id=CUSTOM_EMOJIS["next"]))
+    builder.row(InlineKeyboardButton(text="Change Country", callback_data=f"view_svc_{svc_name}", icon_custom_emoji_id=CUSTOM_EMOJIS["globe"]))
+    builder.row(InlineKeyboardButton(text="Home", callback_data="back_to_home", icon_custom_emoji_id=CUSTOM_EMOJIS["store"]),
+                InlineKeyboardButton(text="OTP Group ", url=OTP_GROUP_LINK, icon_custom_emoji_id=CUSTOM_EMOJIS["chat"]))
     await safe_edit_message(fetching_msg, text, reply_markup=builder.as_markup(), parse_mode="HTML")
     await callback.answer("নাম্বার সফলভাবে পরিবর্তন হয়েছে!")
 
@@ -2087,7 +1954,7 @@ async def auto_detect_range(message: types.Message, state: FSMContext):
         return
     if message.text and message.text.startswith('/'):
         return
-    if message.text in ["GET NUMBER", "ADMIN PANEL", "GET 2FA", "EXTRACT OTP", "STATUS", "🎴 Profile Card", "🎤 Voice FX"]:
+    if message.text in ["GET NUMBER", "ADMIN PANEL", "GET 2FA", "EXTRACT OTP", "STATUS"]:
         return
     text_to_check = message.text or message.caption or ""
     if not text_to_check:
