@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 
 TOKEN = "8647348457:AAHQ97M89lSJ5w_OhI22EASiKdwnncLfZnI"
 NEXA_API_KEY = "nxa_ec8d6f8f5697df75d20622332f35e86df2acb89c"
-NEXA_BASE_URL = "http://63.141.255.227/api/v1"
+NEXA_BASE_URL = "https://nexaotpservice.com/api/v1/"
 NEXA_HEADERS = {"X-API-Key": NEXA_API_KEY}
 NEXA_API_KEY_2 = "Q1ZQNEVBmWRoT1GGcmuJSVuIiEV3ZFJeYXeUVllmhkJeYIBrWoM"
 NEXA_BASE_URL_2 = "http://147.135.212.197/crapi/had/viewstats"
@@ -33,7 +33,7 @@ USER_EMAIL = "mehedihasan706261@gmail.com"
 USER_PASS = "mehedi706261"
 SESSION_TOKEN = ""
 DEVICE_ID = "40ec7e14451cf909833ee25741b83839"
-FETCH_BASE_URL = "http://63.141.255.227"
+FETCH_BASE_URL = "https://nexaotpservice.com/api/v1/"
 OTP_GROUP_LINK = "https://t.me/SKYOTP_SKY"
 
 bot = Bot(token=TOKEN)
